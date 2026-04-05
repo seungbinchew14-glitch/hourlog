@@ -46,14 +46,31 @@ export default function App() {
   const [cooldownLeft, setCooldownLeft] = useState(0);
   const videoRef = useRef(null);
 
-  // 30분 쿨다운 타이머
+  // 정각 기준 쿨다운 (방마다 별도)
   useEffect(() => {
-    const saved = localStorage.getItem('vlog_lastRecord');
-    if (saved) {
-      const next = parseInt(saved) + 30 * 60 * 1000;
-      setNextRecordTime(next);
-    }
-  }, []);
+    if (!roomId) return;
+    const checkCooldown = () => {
+      const now = Date.now();
+      const nowDate = new Date(now);
+      // 이번 정각 시작 시각
+      const thisHourStart = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate(), nowDate.getHours(), 0, 0, 0).getTime();
+      // 다음 정각
+      const nextHourStart = thisHourStart + 60 * 60 * 1000;
+
+      const lastRecord = parseInt(localStorage.getItem(`vlog_lastRecord_${roomId}`) || '0');
+
+      if (lastRecord >= thisHourStart) {
+        // 이번 정각 이후에 이미 찍었음 → 다음 정각까지 대기
+        setNextRecordTime(nextHourStart);
+        setCooldownLeft(nextHourStart - now);
+      } else {
+        // 아직 안 찍었음 → 바로 찍기 가능
+        setNextRecordTime(null);
+        setCooldownLeft(0);
+      }
+    };
+    checkCooldown();
+  }, [roomId]);
 
   useEffect(() => {
     if (!nextRecordTime) return;
@@ -267,8 +284,10 @@ export default function App() {
             timeString: timeString
           });
           const now2 = Date.now();
-          localStorage.setItem('vlog_lastRecord', now2.toString());
-          setNextRecordTime(now2 + 30 * 60 * 1000);
+          localStorage.setItem(`vlog_lastRecord_${roomId}`, now2.toString());
+          const nowDate2 = new Date(now2);
+          const nextHour = new Date(nowDate2.getFullYear(), nowDate2.getMonth(), nowDate2.getDate(), nowDate2.getHours() + 1, 0, 0, 0).getTime();
+          setNextRecordTime(nextHour);
         } catch(e) {
           console.error("업로드 오류:", e);
           showToast("업로드 실패. 영상이 너무 길어요!", 'error');
@@ -490,7 +509,7 @@ export default function App() {
         <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-20 flex flex-col items-center gap-2">
           {cooldownLeft > 0 && (
             <div className="bg-black/70 text-white text-xs px-3 py-1 rounded-full backdrop-blur-sm border border-white/20">
-              {Math.floor(cooldownLeft / 60000)}분 {Math.floor((cooldownLeft % 60000) / 1000)}초 후 촬영 가능
+              다음 정각까지 {Math.floor(cooldownLeft / 3600000) > 0 ? `${Math.floor(cooldownLeft / 3600000)}시간 ` : ''}{Math.floor((cooldownLeft % 3600000) / 60000)}분 {Math.floor((cooldownLeft % 60000) / 1000)}초
             </div>
           )}
           <button
