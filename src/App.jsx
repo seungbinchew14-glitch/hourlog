@@ -197,8 +197,11 @@ export default function App() {
     setRecordProgress(0);
   };
 
+  const mediaRecorderRef = useRef(null);
+  const progressTimerRef = useRef(null);
+
   const startRecording = () => {
-    if (!stream) return;
+    if (!stream || isRecording) return;
     setIsRecording(true);
     setRecordProgress(0);
     let chunks = [];
@@ -209,18 +212,17 @@ export default function App() {
       options = { mimeType: 'video/mp4', videoBitsPerSecond: 800000 };
     }
     const mediaRecorder = new MediaRecorder(stream, options);
+    mediaRecorderRef.current = mediaRecorder;
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
     mediaRecorder.onstop = async () => {
       const blob = new Blob(chunks, { type: options.mimeType || 'video/webm' });
       const now = new Date();
       const timeString = now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
       try {
-        // Firebase Storage에 영상 업로드
         const fileName = `vlogs/${roomId}/${Date.now()}.webm`;
         const storageRef = ref(storage, fileName);
         await uploadBytes(storageRef, blob);
         const downloadURL = await getDownloadURL(storageRef);
-
         await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'vlogs'), {
           roomId: roomId,
           userId: user.uid,
@@ -230,7 +232,6 @@ export default function App() {
           timestamp: Date.now(),
           timeString: timeString
         });
-        // 30분 쿨다운 시작
         const now2 = Date.now();
         localStorage.setItem('vlog_lastRecord', now2.toString());
         setNextRecordTime(now2 + 30 * 60 * 1000);
@@ -241,17 +242,25 @@ export default function App() {
       closeCamera();
     };
     mediaRecorder.start();
-    const duration = 3000;
+    // 프로그레스 바 (최대 30초)
+    const maxDuration = 30000;
     const interval = 50;
     let elapsed = 0;
-    const progressTimer = setInterval(() => {
+    progressTimerRef.current = setInterval(() => {
       elapsed += interval;
-      setRecordProgress((elapsed / duration) * 100);
-      if (elapsed >= duration) {
-        clearInterval(progressTimer);
-        mediaRecorder.stop();
-      }
+      setRecordProgress(Math.min((elapsed / maxDuration) * 100, 100));
     }, interval);
+  };
+
+  const stopRecording = () => {
+    if (!isRecording) return;
+    if (progressTimerRef.current) {
+      clearInterval(progressTimerRef.current);
+      progressTimerRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
   };
 
   const handleDelete = async (vlog) => {
@@ -444,9 +453,19 @@ export default function App() {
               </div>
             </div>
           </div>
-          <div className="h-32 bg-black flex items-center justify-center pb-6">
-            <button onClick={startRecording} disabled={isRecording || !stream} className={`relative flex items-center justify-center w-20 h-20 rounded-full border-4 border-white transition-all ${isRecording ? 'scale-110 opacity-80' : 'active:scale-95'}`}>
-              <div className={`w-16 h-16 rounded-full transition-all ${isRecording ? 'bg-red-600 scale-75 rounded-lg' : 'bg-red-500'}`} />
+          <div className="h-36 bg-black flex flex-col items-center justify-center pb-6 gap-2">
+            <p className="text-gray-400 text-xs">
+              {isRecording ? '손을 떼면 업로드돼요!' : '꾹 눌러서 녹화'}
+            </p>
+            <button
+              onMouseDown={startRecording}
+              onMouseUp={stopRecording}
+              onTouchStart={(e) => { e.preventDefault(); startRecording(); }}
+              onTouchEnd={(e) => { e.preventDefault(); stopRecording(); }}
+              disabled={!stream}
+              className={`relative flex items-center justify-center w-20 h-20 rounded-full border-4 border-white transition-all ${isRecording ? 'scale-110' : 'active:scale-95'}`}
+            >
+              <div className={`w-16 h-16 transition-all ${isRecording ? 'bg-red-600 scale-75 rounded-lg' : 'bg-red-500 rounded-full'}`} />
             </button>
           </div>
         </div>
