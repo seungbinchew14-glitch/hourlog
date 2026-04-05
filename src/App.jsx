@@ -36,7 +36,33 @@ export default function App() {
   const [recordProgress, setRecordProgress] = useState(0);
   const [stream, setStream] = useState(null);
   const [facingMode, setFacingMode] = useState('user');
+  const [nextRecordTime, setNextRecordTime] = useState(null);
+  const [cooldownLeft, setCooldownLeft] = useState(0);
   const videoRef = useRef(null);
+
+  // 30분 쿨다운 타이머
+  useEffect(() => {
+    const saved = localStorage.getItem('vlog_lastRecord');
+    if (saved) {
+      const next = parseInt(saved) + 30 * 60 * 1000;
+      setNextRecordTime(next);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!nextRecordTime) return;
+    const interval = setInterval(() => {
+      const left = nextRecordTime - Date.now();
+      if (left <= 0) {
+        setCooldownLeft(0);
+        setNextRecordTime(null);
+        clearInterval(interval);
+      } else {
+        setCooldownLeft(left);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [nextRecordTime]);
 
   useEffect(() => {
     try {
@@ -124,6 +150,11 @@ export default function App() {
   };
 
   const openCamera = async () => {
+    if (cooldownLeft > 0) {
+      const mins = Math.ceil(cooldownLeft / 60000);
+      showToast(`${mins}분 후에 다시 찍을 수 있어요!`, 'error');
+      return;
+    }
     setIsCameraOpen(true);
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -199,6 +230,10 @@ export default function App() {
           timestamp: Date.now(),
           timeString: timeString
         });
+        // 30분 쿨다운 시작
+        const now2 = Date.now();
+        localStorage.setItem('vlog_lastRecord', now2.toString());
+        setNextRecordTime(now2 + 30 * 60 * 1000);
       } catch(e) {
         console.error("업로드 오류:", e);
         showToast("업로드 실패. 다시 시도해주세요.", 'error');
@@ -332,29 +367,29 @@ export default function App() {
             <p className="text-sm">하단 카메라 버튼을 눌러 첫 일상을 기록하세요!</p>
           </div>
         ) : (
-          <div className="flex flex-col gap-1 px-1">
+          <div className="grid grid-cols-2 gap-1 px-1">
             {vlogs.map((vlog) => (
               <div key={vlog.id} className="relative w-full aspect-[9/16] bg-gray-900 rounded-md overflow-hidden flex items-center justify-center">
                 <video src={vlog.videoURL} autoPlay loop muted playsInline className="w-full h-full object-cover opacity-90" />
                 <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/60" />
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                  <div className="text-5xl font-black text-white drop-shadow-[0_0_10px_rgba(0,0,0,0.8)] tracking-tighter mix-blend-overlay opacity-90">
+                  <div className="text-3xl font-black text-white drop-shadow-[0_0_10px_rgba(0,0,0,0.8)] tracking-tighter mix-blend-overlay opacity-90">
                     {vlog.timeString}
                   </div>
                 </div>
                 {user && vlog.userId === user.uid && (
-                  <button onClick={() => handleDelete(vlog)} className="absolute top-3 right-3 p-2 bg-black/60 hover:bg-red-500/80 text-white rounded-full backdrop-blur-sm transition-colors border border-white/20">
-                    <Trash2 className="w-5 h-5" />
+                  <button onClick={() => handleDelete(vlog)} className="absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-red-500/80 text-white rounded-full backdrop-blur-sm transition-colors border border-white/20">
+                    <Trash2 className="w-4 h-4" />
                   </button>
                 )}
-                <div className="absolute bottom-4 left-4 right-4 text-left pointer-events-none">
-                  <div className="flex items-center gap-2 mb-1">
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center shadow-lg border border-white/30 shrink-0">
-                      <span className="font-bold text-sm text-white">{(vlog.nickname || "알").substring(0, 1)}</span>
+                <div className="absolute bottom-2 left-2 right-2 text-left pointer-events-none">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center shadow-lg border border-white/30 shrink-0">
+                      <span className="font-bold text-[10px] text-white">{(vlog.nickname || "알").substring(0, 1)}</span>
                     </div>
                     <div className="flex flex-col overflow-hidden">
-                      <span className="font-bold text-sm text-white drop-shadow-md truncate leading-tight">{vlog.nickname || "익명"}</span>
-                      <span className="text-xs text-gray-300 drop-shadow-md truncate leading-tight">
+                      <span className="font-bold text-[11px] text-white drop-shadow-md truncate leading-tight">{vlog.nickname || "익명"}</span>
+                      <span className="text-[9px] text-gray-300 drop-shadow-md truncate leading-tight">
                         {new Date(vlog.timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute:'2-digit' })}
                       </span>
                     </div>
@@ -367,8 +402,16 @@ export default function App() {
       </div>
 
       {!isCameraOpen && (
-        <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-20">
-          <button onClick={openCamera} className="flex items-center justify-center w-16 h-16 bg-blue-600 rounded-full shadow-[0_0_20px_rgba(37,99,235,0.5)] border-4 border-gray-900 transition-transform active:scale-95 hover:bg-blue-500">
+        <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-20 flex flex-col items-center gap-2">
+          {cooldownLeft > 0 && (
+            <div className="bg-black/70 text-white text-xs px-3 py-1 rounded-full backdrop-blur-sm border border-white/20">
+              {Math.floor(cooldownLeft / 60000)}분 {Math.floor((cooldownLeft % 60000) / 1000)}초 후 촬영 가능
+            </div>
+          )}
+          <button
+            onClick={openCamera}
+            className={`flex items-center justify-center w-16 h-16 rounded-full border-4 border-gray-900 transition-transform active:scale-95 ${cooldownLeft > 0 ? 'bg-gray-600 opacity-60' : 'bg-blue-600 hover:bg-blue-500 shadow-[0_0_20px_rgba(37,99,235,0.5)]'}`}
+          >
             <Camera className="w-7 h-7 text-white" />
           </button>
         </div>
