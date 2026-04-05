@@ -206,10 +206,13 @@ export default function App() {
     setRecordProgress(0);
     let chunks = [];
     let options = {};
+    // 저용량을 위해 낮은 비트레이트 사용
     if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
-      options = { mimeType: 'video/webm;codecs=vp8', videoBitsPerSecond: 800000 };
+      options = { mimeType: 'video/webm;codecs=vp8', videoBitsPerSecond: 150000 };
+    } else if (MediaRecorder.isTypeSupported('video/webm')) {
+      options = { mimeType: 'video/webm', videoBitsPerSecond: 150000 };
     } else if (MediaRecorder.isTypeSupported('video/mp4')) {
-      options = { mimeType: 'video/mp4', videoBitsPerSecond: 800000 };
+      options = { mimeType: 'video/mp4', videoBitsPerSecond: 150000 };
     }
     const mediaRecorder = new MediaRecorder(stream, options);
     mediaRecorderRef.current = mediaRecorder;
@@ -218,37 +221,38 @@ export default function App() {
       const blob = new Blob(chunks, { type: options.mimeType || 'video/webm' });
       const now = new Date();
       const timeString = now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
-      try {
-        const fileName = `vlogs/${roomId}/${Date.now()}.webm`;
-        const storageRef = ref(storage, fileName);
-        await uploadBytes(storageRef, blob);
-        const downloadURL = await getDownloadURL(storageRef);
-        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'vlogs'), {
-          roomId: roomId,
-          userId: user.uid,
-          nickname: nickname,
-          videoURL: downloadURL,
-          storagePath: fileName,
-          timestamp: Date.now(),
-          timeString: timeString
-        });
-        const now2 = Date.now();
-        localStorage.setItem('vlog_lastRecord', now2.toString());
-        setNextRecordTime(now2 + 30 * 60 * 1000);
-      } catch(e) {
-        console.error("업로드 오류:", e);
-        showToast("업로드 실패. 다시 시도해주세요.", 'error');
-      }
-      closeCamera();
+      const reader = new FileReader();
+      reader.readAsDataURL(blob);
+      reader.onloadend = async () => {
+        const base64data = reader.result;
+        try {
+          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'vlogs'), {
+            roomId: roomId,
+            userId: user.uid,
+            nickname: nickname,
+            videoData: base64data,
+            timestamp: Date.now(),
+            timeString: timeString
+          });
+          const now2 = Date.now();
+          localStorage.setItem('vlog_lastRecord', now2.toString());
+          setNextRecordTime(now2 + 30 * 60 * 1000);
+        } catch(e) {
+          console.error("업로드 오류:", e);
+          showToast("업로드 실패. 영상이 너무 길어요!", 'error');
+        }
+        closeCamera();
+      };
     };
     mediaRecorder.start();
-    // 프로그레스 바 (최대 30초)
-    const maxDuration = 30000;
+    // 최대 5초 자동 정지
+    const maxDuration = 5000;
     const interval = 50;
     let elapsed = 0;
     progressTimerRef.current = setInterval(() => {
       elapsed += interval;
       setRecordProgress(Math.min((elapsed / maxDuration) * 100, 100));
+      if (elapsed >= maxDuration) stopRecording();
     }, interval);
   };
 
@@ -266,10 +270,6 @@ export default function App() {
   const handleDelete = async (vlog) => {
     try {
       await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'vlogs', vlog.id));
-      if (vlog.storagePath) {
-        const storageRef = ref(storage, vlog.storagePath);
-        await deleteObject(storageRef);
-      }
       showToast('영상이 삭제되었습니다.', 'success');
     } catch(e) {
       showToast('삭제에 실패했습니다.', 'error');
@@ -376,10 +376,10 @@ export default function App() {
             <p className="text-sm">하단 카메라 버튼을 눌러 첫 일상을 기록하세요!</p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-1 px-1">
+          <div className="grid grid-cols-2 grid-rows-2 gap-1 px-1">
             {vlogs.map((vlog) => (
               <div key={vlog.id} className="relative w-full aspect-[9/16] bg-gray-900 rounded-md overflow-hidden flex items-center justify-center">
-                <video src={vlog.videoURL} autoPlay loop muted playsInline className="w-full h-full object-cover opacity-90" />
+                <video src={vlog.videoData} autoPlay loop muted playsInline className="w-full h-full object-cover opacity-90" />
                 <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/60" />
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                   <div className="text-3xl font-black text-white drop-shadow-[0_0_10px_rgba(0,0,0,0.8)] tracking-tighter mix-blend-overlay opacity-90">
@@ -441,7 +441,7 @@ export default function App() {
             </button>
           </div>
           <div className="relative flex-1 bg-gray-900 flex items-center justify-center overflow-hidden">
-            <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+            <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`} />
             {isRecording && (
               <div className="absolute top-20 left-1/2 transform -translate-x-1/2 w-3/4 max-w-xs h-2 bg-gray-800/80 rounded-full overflow-hidden backdrop-blur-md border border-white/20">
                 <div className="h-full bg-red-500 transition-all duration-75 ease-linear" style={{ width: `${recordProgress}%` }} />
@@ -455,15 +455,12 @@ export default function App() {
           </div>
           <div className="h-36 bg-black flex flex-col items-center justify-center pb-6 gap-2">
             <p className="text-gray-400 text-xs">
-              {isRecording ? '손을 떼면 업로드돼요!' : '꾹 눌러서 녹화'}
+              {isRecording ? '다시 누르면 업로드돼요!' : '버튼을 눌러서 녹화 시작'}
             </p>
             <button
-              onMouseDown={startRecording}
-              onMouseUp={stopRecording}
-              onTouchStart={(e) => { e.preventDefault(); startRecording(); }}
-              onTouchEnd={(e) => { e.preventDefault(); stopRecording(); }}
+              onClick={isRecording ? stopRecording : startRecording}
               disabled={!stream}
-              className={`relative flex items-center justify-center w-20 h-20 rounded-full border-4 border-white transition-all ${isRecording ? 'scale-110' : 'active:scale-95'}`}
+              className={`relative flex items-center justify-center w-20 h-20 rounded-full border-4 border-white transition-all active:scale-95 ${isRecording ? 'scale-110' : ''}`}
             >
               <div className={`w-16 h-16 transition-all ${isRecording ? 'bg-red-600 scale-75 rounded-lg' : 'bg-red-500 rounded-full'}`} />
             </button>
