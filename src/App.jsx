@@ -31,6 +31,12 @@ export default function App() {
   const [nickname, setNickname] = useState('');
   const [isJoined, setIsJoined] = useState(false);
 
+  // 방 목록 관련 상태
+  const [rooms, setRooms] = useState([]); // [{id, name}]
+  const [showRoomList, setShowRoomList] = useState(false);
+  const [newRoomName, setNewRoomName] = useState('');
+  const [activeRoomName, setActiveRoomName] = useState('');
+
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordProgress, setRecordProgress] = useState(0);
@@ -64,30 +70,56 @@ export default function App() {
     return () => clearInterval(interval);
   }, [nextRecordTime]);
 
+  // 방 목록 로드
   useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      let currentRoom = params.get('room');
-      if (!currentRoom) {
-        const savedRoom = localStorage.getItem('vlog_roomId');
-        if (savedRoom) {
-          currentRoom = savedRoom;
-        } else {
-          currentRoom = Math.random().toString(36).substring(2, 10);
-        }
-        try {
-          const newUrl = window.location.href.split('?')[0] + '?room=' + currentRoom;
-          window.history.replaceState({ path: newUrl }, '', newUrl);
-        } catch (e) {}
-      }
-      setRoomId(currentRoom);
-      localStorage.setItem('vlog_roomId', currentRoom);
-    } catch (e) {
-      const fallbackRoom = Math.random().toString(36).substring(2, 10);
-      setRoomId(fallbackRoom);
-      localStorage.setItem('vlog_roomId', fallbackRoom);
+    const savedRooms = localStorage.getItem('vlog_rooms');
+    let roomList = savedRooms ? JSON.parse(savedRooms) : [];
+    // 가족방 기본 추가
+    const familyRoom = { id: '5pgqk0ho', name: '가족방 🏠' };
+    if (!roomList.find(r => r.id === familyRoom.id)) {
+      roomList = [familyRoom, ...roomList];
+      localStorage.setItem('vlog_rooms', JSON.stringify(roomList));
+    }
+    setRooms(roomList);
+
+    // URL에 room 파라미터 있으면 그걸 현재 방으로
+    const params = new URLSearchParams(window.location.search);
+    const urlRoom = params.get('room');
+    if (urlRoom) {
+      setRoomId(urlRoom);
+      const found = roomList.find(r => r.id === urlRoom);
+      setActiveRoomName(found ? found.name : urlRoom);
+    } else {
+      // 없으면 첫 번째 방으로
+      const first = roomList[0];
+      setRoomId(first.id);
+      setActiveRoomName(first.name);
+      try {
+        const newUrl = window.location.href.split('?')[0] + '?room=' + first.id;
+        window.history.replaceState({}, '', newUrl);
+      } catch(e) {}
     }
   }, []);
+
+  const switchRoom = (room) => {
+    setRoomId(room.id);
+    setActiveRoomName(room.name);
+    setShowRoomList(false);
+    try {
+      const newUrl = window.location.href.split('?')[0] + '?room=' + room.id;
+      window.history.replaceState({}, '', newUrl);
+    } catch(e) {}
+  };
+
+  const addRoom = () => {
+    if (!newRoomName.trim()) return;
+    const newRoom = { id: Math.random().toString(36).substring(2, 10), name: newRoomName.trim() };
+    const updated = [...rooms, newRoom];
+    setRooms(updated);
+    localStorage.setItem('vlog_rooms', JSON.stringify(updated));
+    setNewRoomName('');
+    switchRoom(newRoom);
+  };
 
   useEffect(() => {
     const savedNickname = localStorage.getItem('vlog_nickname');
@@ -344,22 +376,66 @@ export default function App() {
 
   return (
     <div className="relative w-full min-h-screen bg-gray-950 text-gray-100 font-sans mx-auto max-w-md overflow-hidden pb-20 shadow-2xl">
-      <header className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-6 py-4 bg-gradient-to-b from-black/80 to-transparent">
-        <h1 className="text-2xl font-black tracking-tighter flex items-center gap-2">
-          <Clock className="w-6 h-6 text-blue-400" />
-          HourLog
-        </h1>
-        <div className="flex items-center gap-3">
+      <header className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4 py-4 bg-gradient-to-b from-black/80 to-transparent">
+        <button onClick={() => setShowRoomList(true)} className="flex items-center gap-1.5 text-sm font-black tracking-tighter bg-black/40 px-3 py-1.5 rounded-full border border-white/20 backdrop-blur-sm">
+          <Clock className="w-4 h-4 text-blue-400" />
+          <span className="max-w-[100px] truncate">{activeRoomName || 'HourLog'}</span>
+          <span className="text-gray-400 text-xs">▼</span>
+        </button>
+        <div className="flex items-center gap-2">
           <button onClick={copyInviteLink} className="flex items-center gap-1 text-xs bg-blue-600/80 hover:bg-blue-500 text-white px-3 py-1.5 rounded-full border border-blue-400/50 backdrop-blur-sm transition-colors shadow-lg">
             <Copy className="w-3 h-3" />
             <span>초대 복사</span>
           </button>
           <div className="flex items-center gap-1 text-xs bg-gray-800/80 px-3 py-1.5 rounded-full border border-gray-700 backdrop-blur-sm">
             <Users className="w-3 h-3 text-blue-300" />
-            <span className="truncate max-w-[60px]">{nickname}</span>
+            <span className="truncate max-w-[50px]">{nickname}</span>
           </div>
         </div>
       </header>
+
+      {/* 방 목록 모달 */}
+      {showRoomList && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col justify-end">
+          <div className="bg-gray-900 rounded-t-3xl p-6 max-h-[80vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-black">내 방 목록</h2>
+              <button onClick={() => setShowRoomList(false)} className="p-2 bg-gray-800 rounded-full">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex flex-col gap-2 mb-6">
+              {rooms.map(room => (
+                <button
+                  key={room.id}
+                  onClick={() => switchRoom(room)}
+                  className={`flex items-center justify-between px-4 py-3 rounded-xl border transition-colors ${room.id === roomId ? 'bg-blue-600/30 border-blue-500 text-blue-300' : 'bg-gray-800 border-gray-700 text-white hover:bg-gray-700'}`}
+                >
+                  <span className="font-bold">{room.name}</span>
+                  {room.id === roomId && <span className="text-xs text-blue-400">현재 방</span>}
+                </button>
+              ))}
+            </div>
+            <div className="border-t border-gray-700 pt-4">
+              <p className="text-gray-400 text-sm mb-3">새 방 만들기</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newRoomName}
+                  onChange={(e) => setNewRoomName(e.target.value)}
+                  placeholder="방 이름 (예: 수아방 🌸)"
+                  className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  maxLength={15}
+                  onKeyDown={(e) => e.key === 'Enter' && addRoom()}
+                />
+                <button onClick={addRoom} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold text-sm transition-colors">
+                  추가
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast.msg && (
         <div className={`absolute top-20 left-1/2 transform -translate-x-1/2 z-50 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm w-11/12 max-w-sm backdrop-blur-md transition-all ${toast.type === 'error' ? 'bg-red-500/90' : 'bg-green-500/90'}`}>
