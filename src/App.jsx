@@ -91,10 +91,10 @@ export default function App() {
   useEffect(() => {
     const savedRooms = localStorage.getItem('vlog_rooms');
     let roomList = savedRooms ? JSON.parse(savedRooms) : [];
-    // 가족방 기본 추가
-    const familyRoom = { id: '5pgqk0ho', name: '가족방 🏠' };
-    if (!roomList.find(r => r.id === familyRoom.id)) {
-      roomList = [familyRoom, ...roomList];
+    if (roomList.length === 0) {
+      // 처음 시작시 기본 방 하나 생성
+      const defaultRoom = { id: Math.random().toString(36).substring(2, 10), name: '기본방' };
+      roomList = [defaultRoom];
       localStorage.setItem('vlog_rooms', JSON.stringify(roomList));
     }
     setRooms(roomList);
