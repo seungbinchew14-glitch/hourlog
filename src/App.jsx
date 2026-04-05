@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, addDoc, doc, deleteDoc } from 'firebase/firestore';
+import { getFirestore, collection, onSnapshot, addDoc, doc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { Camera, Video, Clock, X, Loader2, AlertCircle, Users, ArrowRight, RefreshCcw, Trash2, Copy, CheckCircle2 } from 'lucide-react';
 
 // --- Firebase 설정 ---
@@ -17,6 +18,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const storage = getStorage(app);
 const appId = 'hourlog-app';
 
 export default function App() {
@@ -179,26 +181,29 @@ export default function App() {
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
     mediaRecorder.onstop = async () => {
       const blob = new Blob(chunks, { type: options.mimeType || 'video/webm' });
-      const reader = new FileReader();
-      reader.readAsDataURL(blob);
-      reader.onloadend = async () => {
-        const base64data = reader.result;
-        const now = new Date();
-        const timeString = now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
-        try {
-          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'vlogs'), {
-            roomId: roomId,
-            userId: user.uid,
-            nickname: nickname,
-            videoData: base64data,
-            timestamp: Date.now(),
-            timeString: timeString
-          });
-        } catch(e) {
-          showToast("업로드 실패 (영상 용량이 너무 클 수 있습니다).", 'error');
-        }
-        closeCamera();
-      };
+      const now = new Date();
+      const timeString = now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+      try {
+        // Firebase Storage에 영상 업로드
+        const fileName = `vlogs/${roomId}/${Date.now()}.webm`;
+        const storageRef = ref(storage, fileName);
+        await uploadBytes(storageRef, blob);
+        const downloadURL = await getDownloadURL(storageRef);
+
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'vlogs'), {
+          roomId: roomId,
+          userId: user.uid,
+          nickname: nickname,
+          videoURL: downloadURL,
+          storagePath: fileName,
+          timestamp: Date.now(),
+          timeString: timeString
+        });
+      } catch(e) {
+        console.error("업로드 오류:", e);
+        showToast("업로드 실패. 다시 시도해주세요.", 'error');
+      }
+      closeCamera();
     };
     mediaRecorder.start();
     const duration = 3000;
@@ -214,9 +219,13 @@ export default function App() {
     }, interval);
   };
 
-  const handleDelete = async (vlogId) => {
+  const handleDelete = async (vlog) => {
     try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'vlogs', vlogId));
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'vlogs', vlog.id));
+      if (vlog.storagePath) {
+        const storageRef = ref(storage, vlog.storagePath);
+        await deleteObject(storageRef);
+      }
       showToast('영상이 삭제되었습니다.', 'success');
     } catch(e) {
       showToast('삭제에 실패했습니다.', 'error');
@@ -323,29 +332,29 @@ export default function App() {
             <p className="text-sm">하단 카메라 버튼을 눌러 첫 일상을 기록하세요!</p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-1 px-1">
+          <div className="flex flex-col gap-1 px-1">
             {vlogs.map((vlog) => (
-              <div key={vlog.id} className="relative w-full aspect-[9/16] bg-gray-900 rounded-md overflow-hidden flex items-center justify-center group">
-                <video src={vlog.videoData} autoPlay loop muted playsInline className="w-full h-full object-cover opacity-90" />
+              <div key={vlog.id} className="relative w-full aspect-[9/16] bg-gray-900 rounded-md overflow-hidden flex items-center justify-center">
+                <video src={vlog.videoURL} autoPlay loop muted playsInline className="w-full h-full object-cover opacity-90" />
                 <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/60" />
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                  <div className="text-3xl font-black text-white drop-shadow-[0_0_10px_rgba(0,0,0,0.8)] tracking-tighter mix-blend-overlay opacity-90">
+                  <div className="text-5xl font-black text-white drop-shadow-[0_0_10px_rgba(0,0,0,0.8)] tracking-tighter mix-blend-overlay opacity-90">
                     {vlog.timeString}
                   </div>
                 </div>
                 {user && vlog.userId === user.uid && (
-                  <button onClick={() => handleDelete(vlog.id)} className="absolute top-2 right-2 p-1.5 bg-black/50 hover:bg-red-500/80 text-white rounded-full backdrop-blur-sm transition-colors border border-white/10">
-                    <Trash2 className="w-4 h-4" />
+                  <button onClick={() => handleDelete(vlog)} className="absolute top-3 right-3 p-2 bg-black/60 hover:bg-red-500/80 text-white rounded-full backdrop-blur-sm transition-colors border border-white/20">
+                    <Trash2 className="w-5 h-5" />
                   </button>
                 )}
-                <div className="absolute bottom-2 left-2 right-2 text-left pointer-events-none">
+                <div className="absolute bottom-4 left-4 right-4 text-left pointer-events-none">
                   <div className="flex items-center gap-2 mb-1">
-                    <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center shadow-lg border border-white/30 shrink-0">
-                      <span className="font-bold text-[10px] text-white">{(vlog.nickname || "알").substring(0, 1)}</span>
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center shadow-lg border border-white/30 shrink-0">
+                      <span className="font-bold text-sm text-white">{(vlog.nickname || "알").substring(0, 1)}</span>
                     </div>
                     <div className="flex flex-col overflow-hidden">
-                      <span className="font-bold text-[11px] text-white drop-shadow-md truncate leading-tight">{vlog.nickname || "익명"}</span>
-                      <span className="text-[9px] text-gray-300 drop-shadow-md truncate leading-tight">
+                      <span className="font-bold text-sm text-white drop-shadow-md truncate leading-tight">{vlog.nickname || "익명"}</span>
+                      <span className="text-xs text-gray-300 drop-shadow-md truncate leading-tight">
                         {new Date(vlog.timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute:'2-digit' })}
                       </span>
                     </div>
